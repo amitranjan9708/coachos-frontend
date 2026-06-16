@@ -1,0 +1,168 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #fafafa;
+    color: #0f172a;
+}
+
+h1, h2, h3, h4, h5, h6, .heading {
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: -0.02em;
+}
+
+.font-display { font-family: 'Outfit', sans-serif; letter-spacing: -0.02em; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+code { font-family: 'JetBrains Mono', monospace; }
+
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 222 47% 11%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 47% 11%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 222 47% 11%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 210 40% 96%;
+        --secondary-foreground: 222 47% 11%;
+        --muted: 210 40% 96%;
+        --muted-foreground: 215 16% 47%;
+        --accent: 210 40% 96%;
+        --accent-foreground: 222 47% 11%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 214 32% 91%;
+        --input: 214 32% 91%;
+        --ring: 222 47% 11%;
+        --chart-1: 222 88% 33%;
+        --chart-2: 142 71% 45%;
+        --chart-3: 4 90% 58%;
+        --chart-4: 47 96% 53%;
+        --chart-5: 280 65% 60%;
+        --radius: 0.25rem;
+    }
+}
+
+@layer base {
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+}
+
+/* Custom focus ring (Swiss high-contrast) */
+*:focus-visible {
+    outline: 2px solid #002FA7;
+    outline-offset: 2px;
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* Kanban scroll snapping */
+.kanban-board {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(280px, 1fr);
+    gap: 1rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+}
+
+/* Card hover for swiss style */
+.swiss-card {
+    @apply bg-white border border-slate-200 transition-all duration-200;
+}
+.swiss-card:hover {
+    @apply border-slate-300 -translate-y-0.5;
+    box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.08);
+}
+
+/* KPI metric */
+.metric-number {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    line-height: 1;
+}
+
+/* Sidebar nav active state */
+.nav-item-active {
+    @apply bg-slate-900 text-white;
+}
+.nav-item {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors;
+}
+
+/* Status pills */
+.pill { @apply inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase tracking-wider rounded-sm; }
+.pill-blue  { @apply bg-blue-50 text-blue-700 border border-blue-200; }
+.pill-green { @apply bg-emerald-50 text-emerald-700 border border-emerald-200; }
+.pill-red   { @apply bg-red-50 text-red-700 border border-red-200; }
+.pill-amber { @apply bg-amber-50 text-amber-800 border border-amber-200; }
+.pill-slate { @apply bg-slate-100 text-slate-700 border border-slate-200; }
+.pill-violet { @apply bg-violet-50 text-violet-700 border border-violet-200; }
+
+/* Auth aesthetic */
+.auth-grid-bg {
+    background-image:
+      linear-gradient(rgba(15,23,42,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+
+@layer base {
+    [data-debug-wrapper="true"] { display: contents !important; }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit; margin-right: inherit; margin-top: inherit; margin-bottom: inherit;
+        padding-left: inherit; padding-right: inherit; padding-top: inherit; padding-bottom: inherit;
+        column-gap: inherit; row-gap: inherit; gap: inherit;
+        border-left-width: inherit; border-right-width: inherit; border-top-width: inherit; border-bottom-width: inherit;
+        border-left-style: inherit; border-right-style: inherit; border-top-style: inherit; border-bottom-style: inherit;
+        border-left-color: inherit; border-right-color: inherit; border-top-color: inherit; border-bottom-color: inherit;
+    }
+}
+
+/* Global API Loading state for empty states */
+body.is-api-loading .empty-state {
+  visibility: hidden; /* hides the text but keeps dimensions */
+  position: relative;
+  border-color: transparent !important;
+  pointer-events: none;
+}
+
+body.is-api-loading .empty-state::after {
+  content: "";
+  visibility: visible;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  margin-left: -12px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Force hide the emergent badge in case of browser caching */
+#emergent-badge, a[href*="emergent.sh"] {
+  display: none !important;
+}
