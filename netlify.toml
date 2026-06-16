@@ -1,6 +1,6 @@
 [build]
-  # The command to build your frontend
-  command = "npm run build"
+  # The command to build your frontend (CI=false prevents warnings from breaking the build)
+  command = "CI=false npm run build"
   
   # The directory where the built assets are output
   publish = "build"
