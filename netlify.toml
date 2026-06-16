@@ -1,0 +1,16 @@
+[build]
+  # The command to build your frontend
+  command = "npm run build"
+  
+  # The directory where the built assets are output
+  publish = "build"
+  
+  # Ensure Netlify uses --legacy-peer-deps during npm install to avoid your dependency errors
+  environment = { NPM_FLAGS = "--legacy-peer-deps" }
+
+# This redirect rule is crucial for Single Page Applications (like React/React Router). 
+# It ensures all paths route back to index.html so React Router can handle them.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
