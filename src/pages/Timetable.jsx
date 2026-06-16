@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Plus, Trash2, BookOpen } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 
 const DAYS = ["mon","tue","wed","thu","fri","sat"];
 const HOURS = ["08:00","09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00","19:00"];
 
 export default function Timetable() {
+  const { user } = useAuth();
   const [slots, setSlots] = useState([]);
   const [batches, setBatches] = useState([]);
   const [faculty, setFaculty] = useState([]);
@@ -68,37 +70,39 @@ export default function Timetable() {
                 {batches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Dialog open={open} onOpenChange={setOpen}>
-              <DialogTrigger asChild><Button className="rounded-sm bg-slate-950 hover:bg-slate-800" data-testid="timetable-add"><Plus size={16}/> Add slot</Button></DialogTrigger>
-              <DialogContent className="rounded-sm">
-                <DialogHeader><DialogTitle className="font-display tracking-tight">Add class slot</DialogTitle></DialogHeader>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Batch" full>
-                    <Select value={form.batch_id} onValueChange={v=>setForm({...form,batch_id:v})}>
-                      <SelectTrigger className="rounded-sm"><SelectValue placeholder="Choose"/></SelectTrigger>
-                      <SelectContent>{batches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Day">
-                    <Select value={form.day} onValueChange={v=>setForm({...form,day:v})}>
-                      <SelectTrigger className="rounded-sm"><SelectValue/></SelectTrigger>
-                      <SelectContent>{DAYS.map(d => <SelectItem key={d} value={d}>{d.toUpperCase()}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Subject"><Input value={form.subject} onChange={e=>setForm({...form,subject:e.target.value})} className="rounded-sm"/></Field>
-                  <Field label="Start"><Input type="time" value={form.start_time} onChange={e=>setForm({...form,start_time:e.target.value})} className="rounded-sm"/></Field>
-                  <Field label="End"><Input type="time" value={form.end_time} onChange={e=>setForm({...form,end_time:e.target.value})} className="rounded-sm"/></Field>
-                  <Field label="Faculty">
-                    <Select value={form.faculty_id} onValueChange={v=>setForm({...form,faculty_id:v})}>
-                      <SelectTrigger className="rounded-sm"><SelectValue placeholder="Choose"/></SelectTrigger>
-                      <SelectContent>{faculty.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Classroom"><Input value={form.classroom} onChange={e=>setForm({...form,classroom:e.target.value})} className="rounded-sm"/></Field>
-                </div>
-                <DialogFooter><Button onClick={create} data-testid="timetable-save" className="rounded-sm bg-slate-950 hover:bg-slate-800">Add slot</Button></DialogFooter>
-              </DialogContent>
-            </Dialog>
+            {user?.role !== "student" && (
+              <Dialog open={open} onOpenChange={setOpen}>
+                <DialogTrigger asChild><Button className="rounded-sm bg-slate-950 hover:bg-slate-800" data-testid="timetable-add"><Plus size={16}/> Add slot</Button></DialogTrigger>
+                <DialogContent className="rounded-sm">
+                  <DialogHeader><DialogTitle className="font-display tracking-tight">Add class slot</DialogTitle></DialogHeader>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Batch" full>
+                      <Select value={form.batch_id} onValueChange={v=>setForm({...form,batch_id:v})}>
+                        <SelectTrigger className="rounded-sm"><SelectValue placeholder="Choose"/></SelectTrigger>
+                        <SelectContent>{batches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </Field>
+                    <Field label="Day">
+                      <Select value={form.day} onValueChange={v=>setForm({...form,day:v})}>
+                        <SelectTrigger className="rounded-sm"><SelectValue/></SelectTrigger>
+                        <SelectContent>{DAYS.map(d => <SelectItem key={d} value={d}>{d.toUpperCase()}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </Field>
+                    <Field label="Subject"><Input value={form.subject} onChange={e=>setForm({...form,subject:e.target.value})} className="rounded-sm"/></Field>
+                    <Field label="Start"><Input type="time" value={form.start_time} onChange={e=>setForm({...form,start_time:e.target.value})} className="rounded-sm"/></Field>
+                    <Field label="End"><Input type="time" value={form.end_time} onChange={e=>setForm({...form,end_time:e.target.value})} className="rounded-sm"/></Field>
+                    <Field label="Faculty">
+                      <Select value={form.faculty_id} onValueChange={v=>setForm({...form,faculty_id:v})}>
+                        <SelectTrigger className="rounded-sm"><SelectValue placeholder="Choose"/></SelectTrigger>
+                        <SelectContent>{faculty.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </Field>
+                    <Field label="Classroom"><Input value={form.classroom} onChange={e=>setForm({...form,classroom:e.target.value})} className="rounded-sm"/></Field>
+                  </div>
+                  <DialogFooter><Button onClick={create} data-testid="timetable-save" className="rounded-sm bg-slate-950 hover:bg-slate-800">Add slot</Button></DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
           </>
         }
       />
@@ -124,7 +128,9 @@ export default function Timetable() {
                           <div className="font-bold">{slot.subject}</div>
                           <div className="text-slate-300 text-[10px]">{faculty.find(f=>f.id===slot.faculty_id)?.name || ""}</div>
                           <div className="text-slate-400 text-[10px]">{slot.classroom}</div>
-                          <button onClick={(e)=>{e.stopPropagation(); remove(slot.id)}} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100"><Trash2 size={10}/></button>
+                          {user?.role !== "student" && (
+                            <button onClick={(e)=>{e.stopPropagation(); remove(slot.id)}} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100"><Trash2 size={10}/></button>
+                          )}
                         </div>
                       )}
                     </td>

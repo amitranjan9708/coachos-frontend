@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, CalendarClock, Trash2, FileSpreadsheet, Play, CheckCircle2, Clock, Menu, X } from "lucide-react";
+import { Plus, CalendarClock, Trash2, FileSpreadsheet, Play, CheckCircle2, Clock, Menu, X, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -22,13 +22,19 @@ export default function Tests() {
     allow_reattempt: false, max_reattempts: 1
   });
 
-  const [offlineForm, setOfflineForm] = useState({ paper_code: "", file: null });
+  const [offlineForm, setOfflineForm] = useState({ test_id: "", file: null });
+  const [batches, setBatches] = useState([]);
 
   // Submissions data for students
   const [submissions, setSubmissions] = useState([]);
+  
+  // Results view for teachers
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const [testResults, setTestResults] = useState(null);
 
   // Test Taking Mode States
-  const [mode, setMode] = useState("list"); // list | taking | result
+  const [mode, setMode] = useState("list"); // list | instructions | taking | result
+  const [instructionsAgreed, setInstructionsAgreed] = useState(false);
   const [activeTest, setActiveTest] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -60,8 +66,12 @@ export default function Tests() {
         setSubmissions(subRes.data);
         setList(r.data);
       } else {
-        const r = await api.get("/tests");
+        const [r, bRes] = await Promise.all([
+          api.get("/tests"),
+          api.get("/batches")
+        ]);
         setList(r.data);
+        setBatches(bRes.data);
       }
     } catch (e) {
       console.error(e);
@@ -145,11 +155,11 @@ export default function Tests() {
   };
 
   const handleOfflineSubmit = async () => {
-    if (!offlineForm.paper_code || !offlineForm.file) {
-      toast.error("Paper code and file required"); return;
+    if (!offlineForm.test_id || !offlineForm.file) {
+      toast.error("Test ID and file required"); return;
     }
     const formData = new FormData();
-    formData.append("paper_code", offlineForm.paper_code);
+    formData.append("test_id", offlineForm.test_id);
     formData.append("file", offlineForm.file);
     try {
       const res = await api.post("/tests/offline-evaluate", formData, {
@@ -159,6 +169,16 @@ export default function Tests() {
       setOfflineOpen(false);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Evaluation failed");
+    }
+  };
+
+  const viewTestResults = async (testId) => {
+    try {
+      const res = await api.get(`/tests/${testId}/results`);
+      setTestResults(res.data);
+      setResultsOpen(true);
+    } catch(e) {
+      toast.error("Failed to fetch test results");
     }
   };
 
@@ -195,22 +215,8 @@ export default function Tests() {
       setCurrentIdx(0);
       setResponses({});
       setTimeRemaining(paper.duration_minutes * 60 || 3600);
-      setMode("taking");
-      setSidePanelOpen(true);
-      setTabSwitches(0);
-      setCheatFlags([]);
-      setCheatWarning("");
-
-      // Attempt to enter fullscreen
-      try {
-        if (document.documentElement.requestFullscreen) {
-          await document.documentElement.requestFullscreen();
-        }
-      } catch (err) {
-        console.warn("Fullscreen request failed", err);
-      }
-      
-      toast.success("Test started! Fullscreen mode enforced.");
+      setMode("instructions");
+      setInstructionsAgreed(false);
     } catch (e) {
       toast.error("Failed to load test paper. Make sure paper code exists.");
     }
@@ -231,11 +237,6 @@ export default function Tests() {
         tab_switches: tabSwitches,
         cheat_flags: cheatFlags
       };
-      
-      // Exit fullscreen if we are in it
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(err => console.warn(err));
-      }
       
       const res = await api.post(`/tests/${activeTest.id}/submit`, body);
       if (res.data.ok) {
@@ -281,18 +282,74 @@ export default function Tests() {
                     <Button variant="outline" className="rounded-sm"><FileSpreadsheet size={16} className="mr-2"/> Offline Evaluate</Button>
                   </DialogTrigger>
                   <DialogContent className="rounded-sm">
-                    <DialogHeader><DialogTitle>Evaluate Offline Responses</DialogTitle></DialogHeader>
-                    <div className="space-y-3">
-                      <Field label="Paper Code">
-                        <Input value={offlineForm.paper_code} onChange={e=>setOfflineForm({...offlineForm, paper_code:e.target.value})} className="rounded-sm"/>
-                      </Field>
-                      <Field label="Master Excel (Col 1: Student ID, Col 2+: Responses)">
-                        <Input type="file" accept=".xlsx" onChange={e=>setOfflineForm({...offlineForm, file:e.target.files[0]})} className="rounded-sm"/>
+                    <DialogHeader><DialogTitle>Offline Evaluation (Excel)</DialogTitle></DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <Field label="Test ID (from Scheduled Tests)"><Input value={offlineForm.test_id} onChange={e=>setOfflineForm({...offlineForm,test_id:e.target.value})} className="rounded-sm"/></Field>
+                      <Field label="Master Excel File">
+                        <Input type="file" accept=".xlsx,.xls" onChange={e=>setOfflineForm({...offlineForm,file:e.target.files[0]})} className="rounded-sm"/>
+                        <div className="text-xs text-slate-500 mt-2">
+                          Format: Col A: Student Phone, Col B: Batch ID, Col C: Course ID, Col D onwards: Responses matching question sequence.
+                        </div>
                       </Field>
                     </div>
-                    <DialogFooter>
-                      <Button onClick={handleOfflineSubmit} className="rounded-sm bg-slate-950 hover:bg-slate-800">Evaluate</Button>
-                    </DialogFooter>
+                    <DialogFooter><Button onClick={handleOfflineSubmit} className="rounded-sm bg-indigo-600 hover:bg-indigo-700">Evaluate Upload</Button></DialogFooter>
+                  </DialogContent>
+                </Dialog>
+      
+                {/* RESULTS MODAL FOR TEACHERS */}
+                <Dialog open={resultsOpen} onOpenChange={setResultsOpen}>
+                  <DialogContent className="rounded-sm max-w-4xl max-h-[85vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Test Results: {testResults?.test?.title}</DialogTitle>
+                    </DialogHeader>
+                    {testResults && (
+                      <div className="space-y-6 py-2">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="p-3 bg-slate-50 rounded border text-sm">
+                            <div className="font-bold text-slate-500">Total Submissions</div>
+                            <div className="text-xl font-black">{testResults.submissions.length}</div>
+                          </div>
+                          <div className="p-3 bg-slate-50 rounded border text-sm">
+                            <div className="font-bold text-slate-500">Max Score</div>
+                            <div className="text-xl font-black">{testResults.paper?.total_marks || "N/A"}</div>
+                          </div>
+                          <div className="p-3 bg-slate-50 rounded border text-sm">
+                            <div className="font-bold text-slate-500">Type</div>
+                            <div className="text-xl font-black capitalize">{testResults.test.type}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="border rounded-sm overflow-hidden">
+                          <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-100 text-xs uppercase text-slate-600">
+                              <tr>
+                                <th className="px-4 py-3 border-b">Student Name</th>
+                                <th className="px-4 py-3 border-b">Phone</th>
+                                <th className="px-4 py-3 border-b text-center">Score</th>
+                                <th className="px-4 py-3 border-b text-center">Correct/Wrong</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {testResults.submissions.map((sub, i) => (
+                                <tr key={i} className="border-b hover:bg-slate-50">
+                                  <td className="px-4 py-3 font-medium">{sub._student_name || "Unknown"}</td>
+                                  <td className="px-4 py-3 text-slate-500 font-mono">{sub._student_phone || "-"}</td>
+                                  <td className="px-4 py-3 text-center font-bold text-indigo-700">{sub.score}</td>
+                                  <td className="px-4 py-3 text-center text-xs">
+                                    <span className="text-emerald-600 font-bold">{sub.correct_answers}</span>
+                                    {" / "}
+                                    <span className="text-red-500 font-bold">{sub.wrong_answers}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {testResults.submissions.length === 0 && (
+                                <tr><td colSpan="4" className="text-center py-6 text-slate-500">No submissions yet.</td></tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </DialogContent>
                 </Dialog>
 
@@ -312,9 +369,23 @@ export default function Tests() {
                             <SelectContent>{["online","offline"].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                           </Select>
                         </Field>
-                        <Field label="Paper Code (From Question Papers)"><Input value={form.paper_code} onChange={e=>setForm({...form,paper_code:e.target.value})} className="rounded-sm font-mono"/></Field>
-                        <Field label="Batch ID (Optional)"><Input value={form.batch_id} onChange={e=>setForm({...form,batch_id:e.target.value})} className="rounded-sm"/></Field>
-                        <Field label="Test Date & Time"><Input type="datetime-local" value={form.test_date} onChange={e=>setForm({...form,test_date:e.target.value})} className="rounded-sm"/></Field>
+                        <Field label="Paper Code">
+                          <Input value={form.paper_code} onChange={e=>setForm({...form,paper_code:e.target.value})} className="rounded-sm font-mono"/>
+                          <div className="text-[10px] text-slate-500 mt-1">
+                            You can copy the paper code from the <b>Question Papers</b> section.
+                          </div>
+                        </Field>
+                        <Field label="Target Batch (Optional)">
+                          <Select value={form.batch_id || "none"} onValueChange={v=>setForm({...form,batch_id:v==="none"?"":v})}>
+                            <SelectTrigger className="rounded-sm"><SelectValue placeholder="All Batches / Open" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">All Batches / Open</SelectItem>
+                              {batches.map(b => (
+                                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
                         <Field label="Login Window (mins)"><Input type="number" value={form.login_window_minutes} onChange={e=>setForm({...form,login_window_minutes:e.target.value})} className="rounded-sm"/></Field>
                         <div className="col-span-2 flex items-center gap-4 p-3 bg-slate-50 border border-slate-100 rounded">
                           <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -354,6 +425,13 @@ export default function Tests() {
                   </div>
                   <div className="font-display text-lg font-bold mt-3">{t.title}</div>
                   <div className="text-xs text-slate-500">{t.subject} · {t.type} {t.paper_code && `· Paper Code: ${t.paper_code}`}</div>
+                  {user?.role !== "student" && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 flex items-center cursor-pointer hover:bg-indigo-100" onClick={() => { navigator.clipboard.writeText(t.id); toast.success("Test ID copied!"); }}>
+                        ID: {t.id} <Copy size={10} className="ml-1" />
+                      </div>
+                    </div>
+                  )}
                   {t.batch_id && <div className="text-[10px] font-mono text-slate-400 mt-1">Batch Code: {t.batch_id}</div>}
                   {t.test_date && <div className="mt-3 text-xs text-slate-600 font-medium bg-slate-50 p-2 rounded border border-slate-100">
                     Scheduled: {new Date(t.test_date).toLocaleString()}
@@ -385,12 +463,12 @@ export default function Tests() {
                       View Latest Result
                     </Button>
                   )}
-                  {user?.role !== "student" && t.type === "online" && (
+                  {user?.role !== "student" && (
                      <Button 
-                     onClick={() => startOnlineTest(t)} 
-                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
+                     onClick={() => viewTestResults(t.id)} 
+                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
                    >
-                     <Play size={12} /> Preview Test
+                     View Results
                    </Button>
                   )}
                 </div>
@@ -399,6 +477,52 @@ export default function Tests() {
             {list.length === 0 && <div className="empty-state col-span-full text-center text-sm text-slate-500 py-10 border border-dashed border-slate-300">No scheduled tests</div>}
           </div>
         </>
+      )}
+
+      {/* INSTRUCTIONS MODE */}
+      {mode === "instructions" && (
+        <div className="max-w-3xl mx-auto swiss-card p-8 space-y-6 mt-6">
+          <h2 className="text-2xl font-black text-slate-900">Test Instructions</h2>
+          <ul className="list-disc pl-5 space-y-2 text-slate-700">
+            <li>Ensure you have a stable internet connection.</li>
+            <li>The test will be conducted in fullscreen mode. Exiting fullscreen will be recorded as a security violation.</li>
+            <li>Do not switch tabs or minimize the browser window.</li>
+            <li>Keyboard shortcuts for copying, pasting, and taking screenshots are disabled.</li>
+          </ul>
+          <div className="flex items-center gap-2 p-4 bg-slate-50 border border-slate-200 rounded">
+            <input 
+              type="checkbox" 
+              id="agreeCheck" 
+              checked={instructionsAgreed} 
+              onChange={e => setInstructionsAgreed(e.target.checked)} 
+              className="w-4 h-4 text-indigo-600 rounded"
+            />
+            <label htmlFor="agreeCheck" className="text-sm font-medium text-slate-700 select-none cursor-pointer">
+              I have read and understood the instructions.
+            </label>
+          </div>
+          <Button 
+            disabled={!instructionsAgreed} 
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-sm py-6 text-lg"
+            onClick={async () => {
+              setMode("taking");
+              setSidePanelOpen(true);
+              setTabSwitches(0);
+              setCheatFlags([]);
+              setCheatWarning("");
+              try {
+                if (document.documentElement.requestFullscreen) {
+                  await document.documentElement.requestFullscreen();
+                }
+              } catch (err) {
+                console.warn("Fullscreen request failed", err);
+              }
+              toast.success("Test started! Fullscreen mode enforced.");
+            }}
+          >
+            Enter Fullscreen &amp; Start Test
+          </Button>
+        </div>
       )}
 
       {/* ACTIVE TEST MODE */}
@@ -603,6 +727,7 @@ export default function Tests() {
           <div>
             <h2 className="text-2xl font-black text-slate-900">Test Submitted!</h2>
             <p className="text-sm text-slate-500 mt-2">Your answers have been calculated successfully.</p>
+            <p className="text-sm font-medium text-indigo-600 mt-2">You can now exit fullscreen mode (Press Esc).</p>
           </div>
           <div className="bg-slate-50 border border-slate-100 rounded p-4">
             <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Your Score</div>
