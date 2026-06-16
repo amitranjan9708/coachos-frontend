@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Plus, CalendarClock, Trash2, FileSpreadsheet, Play, CheckCircle2, Clock, Menu, X, Copy } from "lucide-react";
 import { toast } from "sonner";
@@ -13,13 +14,13 @@ import { useAuth } from "@/contexts/AuthContext";
 export default function Tests() {
   const { user } = useAuth();
   const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [offlineOpen, setOfflineOpen] = useState(false);
   
   const [form, setForm] = useState({
-    title: "", subject: "", type: "online", paper_code: "", 
-    test_date: "", login_window_minutes: 30, batch_id: "",
-    allow_reattempt: false, max_reattempts: 1
+    title: "", subject: "", type: "online", paper_code: "", test_date: "", login_window_minutes: 30,
+    allow_reattempt: false, max_reattempts: 1, resume_policy: "not_allowed", batch_id: "", duration_minutes: 60
   });
 
   const [offlineForm, setOfflineForm] = useState({ test_id: "", file: null });
@@ -49,6 +50,7 @@ export default function Tests() {
   const timerRef = useRef(null);
 
   const [reviewSubmission, setReviewSubmission] = useState(null);
+  const [activeSessions, setActiveSessions] = useState({});
 
   // Anti-cheating states
   const [tabSwitches, setTabSwitches] = useState(0);
@@ -56,14 +58,17 @@ export default function Tests() {
   const [cheatWarning, setCheatWarning] = useState("");
 
   const load = async () => {
+    setLoading(true);
     try {
       if (user?.role === "student") {
-        const [r, subRes] = await Promise.all([
+        const [r, subRes, sessionRes] = await Promise.all([
           api.get("/tests"),
-          api.get("/test-submissions/my-results")
+          api.get("/test-submissions/my-results"),
+          api.get("/tests/sessions/active")
         ]);
         // Set both states at the same time to avoid UI flicker
         setSubmissions(subRes.data);
+        setActiveSessions(sessionRes.data || {});
         setList(r.data);
       } else {
         const [r, bRes] = await Promise.all([
@@ -75,9 +80,10 @@ export default function Tests() {
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
-  
   useEffect(() => { 
     load(); 
   }, []);
@@ -145,11 +151,43 @@ export default function Tests() {
     };
   }, [mode, timeRemaining]);
 
+  // Auto-save session progress (Periodic and on response change)
+  useEffect(() => {
+    if (mode !== "taking" || !activeTest) return;
+
+    // Debounce save when responses change
+    const timeSpent = (activeTest.duration_minutes * 60) - timeRemaining;
+    const timeoutId = setTimeout(() => {
+      api.post(`/tests/${activeTest.id}/session/save`, {
+        answers: responses,
+        time_spent_seconds: timeSpent
+      }).catch(e => console.warn("Auto-save failed"));
+    }, 1000);
+
+    return () => clearTimeout(timeoutId);
+  }, [responses, mode, activeTest]);
+
+  // Periodic heartbeat every 15 seconds to sync time spent if they haven't answered anything
+  useEffect(() => {
+    if (mode !== "taking" || !activeTest) return;
+    if (timeRemaining > 0 && timeRemaining % 15 === 0) {
+      const timeSpent = (activeTest.duration_minutes * 60) - timeRemaining;
+      api.post(`/tests/${activeTest.id}/session/save`, {
+        answers: responses,
+        time_spent_seconds: timeSpent
+      }).catch(e => console.warn("Periodic auto-save failed"));
+    }
+  }, [timeRemaining]);
+
   const create = async () => {
     if (!form.title || !form.paper_code) { toast.error("Title and Paper Code required"); return; }
+    // Convert test_date from local datetime-local string to UTC ISO so server comparisons are correct
+    const testDateUTC = form.test_date ? new Date(form.test_date).toISOString() : "";
     await api.post("/tests", {
       ...form,
-      login_window_minutes: Number(form.login_window_minutes)
+      test_date: testDateUTC,
+      login_window_minutes: Number(form.login_window_minutes),
+      duration_minutes: Number(form.duration_minutes)
     });
     toast.success("Test scheduled"); setOpen(false); load();
   };
@@ -213,8 +251,19 @@ export default function Tests() {
       setQuestions(qList);
       setActiveTest(test);
       setCurrentIdx(0);
-      setResponses({});
-      setTimeRemaining(paper.duration_minutes * 60 || 3600);
+
+      // Pre-load any existing answers from the active session (for resume)
+      const existingSession = activeSessions[test.id];
+      if (existingSession && existingSession.answers && Object.keys(existingSession.answers).length > 0) {
+        setResponses(existingSession.answers);
+        toast.info("Previous answers restored.");
+      } else {
+        setResponses({});
+      }
+
+      // Use the test's own duration_minutes (set at scheduling time). Fall back to paper duration.
+      const durationMins = test.duration_minutes || paper.duration_minutes || 60;
+      setTimeRemaining(durationMins * 60);
       setMode("instructions");
       setInstructionsAgreed(false);
     } catch (e) {
@@ -267,6 +316,121 @@ export default function Tests() {
     sectionsMap[sec].push({ q, idx });
   });
 
+
+  const upcomingTests = [];
+  const pastTests = [];
+  const missedTests = [];
+
+  if (user?.role === "student") {
+    list.forEach(t => {
+      const testSubmissions = submissions.filter(s => s.test_id === t.id);
+      const hasAttempted = testSubmissions.length > 0;
+      let isMissed = false;
+      if (t.test_date) {
+        const start = new Date(t.test_date);
+        const end = new Date(start.getTime() + (t.login_window_minutes || 30) * 60000);
+        if (new Date() > end && !hasAttempted) {
+          isMissed = true;
+        }
+      }
+      if (hasAttempted) {
+        pastTests.push(t);
+      } else if (isMissed) {
+        missedTests.push(t);
+      } else {
+        upcomingTests.push(t);
+      }
+    });
+  }
+
+  const renderTestCard = (t) => {
+    const testSubmissions = submissions.filter(s => s.test_id === t.id);
+    const attemptCount = testSubmissions.length;
+    const hasAttempted = attemptCount > 0;
+    const canReattempt = t.allow_reattempt && attemptCount < t.max_reattempts;
+    const isUpcoming = t.test_date && new Date(t.test_date) > new Date();
+    
+    let isMissed = false;
+    if (t.test_date) {
+      const end = new Date(new Date(t.test_date).getTime() + (t.login_window_minutes || 30) * 60000);
+      if (new Date() > end && !hasAttempted) {
+         isMissed = true;
+      }
+    }
+
+    return (
+<div key={t.id} className="swiss-card p-5 flex flex-col justify-between" data-testid={`test-card-${t.id}`}>
+                <div>
+                  <div className="flex items-start justify-between">
+                    <div className="w-10 h-10 bg-slate-100 grid place-items-center rounded"><CalendarClock size={18}/></div>
+                    {user?.role !== "student" && (
+                      <button onClick={async()=>{await api.delete(`/tests/${t.id}`); load();}} className="text-slate-400 hover:text-red-600"><Trash2 size={14}/></button>
+                    )}
+                  </div>
+                  <div className="font-display text-lg font-bold mt-3">{t.title}</div>
+                  <div className="text-xs text-slate-500">{t.subject} · {t.type} {t.paper_code && `· Paper Code: ${t.paper_code}`}</div>
+                  {user?.role !== "student" && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 flex items-center cursor-pointer hover:bg-indigo-100" onClick={() => { navigator.clipboard.writeText(t.id); toast.success("Test ID copied!"); }}>
+                        ID: {t.id} <Copy size={10} className="ml-1" />
+                      </div>
+                    </div>
+                  )}
+                  {t.batch_id && <div className="text-[10px] font-mono text-slate-400 mt-1">Batch Code: {t.batch_id}</div>}
+                  {t.test_date && <div className="mt-3 text-xs text-slate-600 font-medium bg-slate-50 p-2 rounded border border-slate-100">
+                    Scheduled: {new Date(t.test_date).toLocaleString()}
+                  </div>}
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="pill pill-slate">{t.status}</span>
+                    {t.allow_reattempt && <span className="text-[10px] font-medium text-slate-500">Max Attempts: {t.max_reattempts}</span>}
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {t.type === "online" && (!hasAttempted || canReattempt) && user?.role === "student" && (
+                    isMissed ? (
+                      <Button disabled className="w-full bg-red-50 text-red-600 font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs cursor-not-allowed">Missed Test</Button>
+                    ) : isUpcoming ? (
+                      <Button disabled className="w-full bg-slate-200 text-slate-500 font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs cursor-not-allowed">
+                        <Clock size={12} /> Upcoming Test
+                      </Button>
+                    ) : activeSessions[t.id] && t.resume_policy === "not_allowed" ? (
+                        <Button disabled className="w-full bg-slate-200 text-slate-500 font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs cursor-not-allowed">
+                          Test Locked (No Resume)
+                        </Button>
+                      ) : (
+                        <Button 
+                          onClick={() => startOnlineTest(t)} 
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
+                        >
+                          <Play size={12} /> {activeSessions[t.id] ? "Resume Test" : hasAttempted ? `Reattempt Test (${t.max_reattempts - attemptCount} left)` : "Start Online Test"}
+                        </Button>
+                      )
+                  )}
+                  {hasAttempted && user?.role === "student" && (
+                    <Button 
+                      variant="outline"
+                      onClick={() => {
+                        setReviewSubmission(testSubmissions[0]);
+                        setMode("review");
+                      }} 
+                      className="w-full font-medium py-1.5 rounded-sm text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100"
+                    >
+                      View Latest Result
+                    </Button>
+                  )}
+                  {user?.role !== "student" && (
+                     <Button 
+                     onClick={() => viewTestResults(t.id)} 
+                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
+                   >
+                     View Results
+                   </Button>
+                  )}
+                </div>
+              </div>
+    );
+  };
   return (
     <div data-testid="tests-page">
       {mode === "list" && (
@@ -386,6 +550,8 @@ export default function Tests() {
                             </SelectContent>
                           </Select>
                         </Field>
+                        <Field label="Date & Time"><Input type="datetime-local" value={form.test_date} onChange={e=>setForm({...form,test_date:e.target.value})} className="rounded-sm"/></Field>
+                        <Field label="Duration (mins)"><Input type="number" min="1" placeholder="e.g. 60" value={form.duration_minutes} onChange={e=>setForm({...form,duration_minutes:e.target.value})} className="rounded-sm"/></Field>
                         <Field label="Login Window (mins)"><Input type="number" value={form.login_window_minutes} onChange={e=>setForm({...form,login_window_minutes:e.target.value})} className="rounded-sm"/></Field>
                         <div className="col-span-2 flex items-center gap-4 p-3 bg-slate-50 border border-slate-100 rounded">
                           <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -399,6 +565,24 @@ export default function Tests() {
                             </div>
                           )}
                         </div>
+                        <div className="col-span-2 flex items-center gap-4 p-3 bg-slate-50 border border-slate-100 rounded">
+                          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                            <input type="checkbox" checked={form.resume_policy !== "not_allowed"} onChange={e=>setForm({...form,resume_policy:e.target.checked ? "allowed_paused" : "not_allowed"})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                            Allow Resume (Recover from crashes/exits)
+                          </label>
+                          {form.resume_policy !== "not_allowed" && (
+                            <div className="flex items-center gap-2 ml-auto">
+                              <Label className="text-xs whitespace-nowrap">Timer Behavior:</Label>
+                              <Select value={form.resume_policy} onValueChange={v=>setForm({...form,resume_policy:v})}>
+                                <SelectTrigger className="w-[180px] rounded-sm h-8 text-xs bg-white"><SelectValue/></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="allowed_paused">Pause Timer While Away</SelectItem>
+                                  <SelectItem value="allowed_unpaused">Keep Timer Running in Real Time</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <DialogFooter><Button data-testid="test-save" onClick={create} className="rounded-sm bg-slate-950 hover:bg-slate-800">Schedule</Button></DialogFooter>
@@ -407,82 +591,56 @@ export default function Tests() {
               </div>
             )}
           />
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {list.map(t => {
-              const testSubmissions = submissions.filter(s => s.test_id === t.id);
-              const attemptCount = testSubmissions.length;
-              const hasAttempted = attemptCount > 0;
-              const canReattempt = t.allow_reattempt && attemptCount < t.max_reattempts;
-              
-              return (
-              <div key={t.id} className="swiss-card p-5 flex flex-col justify-between" data-testid={`test-card-${t.id}`}>
-                <div>
-                  <div className="flex items-start justify-between">
-                    <div className="w-10 h-10 bg-slate-100 grid place-items-center rounded"><CalendarClock size={18}/></div>
-                    {user?.role !== "student" && (
-                      <button onClick={async()=>{await api.delete(`/tests/${t.id}`); load();}} className="text-slate-400 hover:text-red-600"><Trash2 size={14}/></button>
-                    )}
-                  </div>
-                  <div className="font-display text-lg font-bold mt-3">{t.title}</div>
-                  <div className="text-xs text-slate-500">{t.subject} · {t.type} {t.paper_code && `· Paper Code: ${t.paper_code}`}</div>
-                  {user?.role !== "student" && (
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 flex items-center cursor-pointer hover:bg-indigo-100" onClick={() => { navigator.clipboard.writeText(t.id); toast.success("Test ID copied!"); }}>
-                        ID: {t.id} <Copy size={10} className="ml-1" />
-                      </div>
-                    </div>
-                  )}
-                  {t.batch_id && <div className="text-[10px] font-mono text-slate-400 mt-1">Batch Code: {t.batch_id}</div>}
-                  {t.test_date && <div className="mt-3 text-xs text-slate-600 font-medium bg-slate-50 p-2 rounded border border-slate-100">
-                    Scheduled: {new Date(t.test_date).toLocaleString()}
-                  </div>}
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className="pill pill-slate">{t.status}</span>
-                    {t.allow_reattempt && <span className="text-[10px] font-medium text-slate-500">Max Attempts: {t.max_reattempts}</span>}
-                  </div>
-                </div>
+          
+          {loading ? (
+            <div className="py-20 text-center flex flex-col items-center text-slate-500">
+               <div className="animate-spin w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full mb-4" />
+               <p>Loading scheduled tests...</p>
+            </div>
+          ) : user?.role === "student" ? (
+             <Tabs defaultValue="upcoming" className="mt-6">
+                <TabsList>
+                  <TabsTrigger value="upcoming">Upcoming & Active</TabsTrigger>
+                  <TabsTrigger value="past">Past Tests</TabsTrigger>
+                  <TabsTrigger value="missed">Missed Tests</TabsTrigger>
+                </TabsList>
+                <TabsContent value="upcoming" className="mt-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                     {upcomingTests.map(renderTestCard)}
+                     {upcomingTests.length === 0 && <div className="col-span-full text-center py-10 text-slate-500 text-sm">No upcoming tests</div>}
+                   </div>
+                </TabsContent>
+                <TabsContent value="past" className="mt-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                     {pastTests.map(renderTestCard)}
+                     {pastTests.length === 0 && <div className="col-span-full text-center py-10 text-slate-500 text-sm">No past tests</div>}
+                   </div>
+                </TabsContent>
+                <TabsContent value="missed" className="mt-6">
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                     {missedTests.map(renderTestCard)}
+                     {missedTests.length === 0 && <div className="col-span-full text-center py-10 text-slate-500 text-sm">No missed tests</div>}
+                   </div>
+                </TabsContent>
+             </Tabs>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {list.map(renderTestCard)}
+              {list.length === 0 && <div className="empty-state col-span-full text-center text-sm text-slate-500 py-10 border border-dashed border-slate-300">No scheduled tests</div>}
+            </div>
+          )}
 
-                <div className="mt-4 space-y-2">
-                  {t.type === "online" && (!hasAttempted || canReattempt) && user?.role === "student" && (
-                    <Button 
-                      onClick={() => startOnlineTest(t)} 
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
-                    >
-                      <Play size={12} /> {hasAttempted ? `Reattempt Test (${t.max_reattempts - attemptCount} left)` : "Start Online Test"}
-                    </Button>
-                  )}
-                  {hasAttempted && user?.role === "student" && (
-                    <Button 
-                      variant="outline"
-                      onClick={() => {
-                        setReviewSubmission(testSubmissions[0]);
-                        setMode("review");
-                      }} 
-                      className="w-full font-medium py-1.5 rounded-sm text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100"
-                    >
-                      View Latest Result
-                    </Button>
-                  )}
-                  {user?.role !== "student" && (
-                     <Button 
-                     onClick={() => viewTestResults(t.id)} 
-                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-1.5 rounded-sm flex items-center justify-center gap-1.5 text-xs"
-                   >
-                     View Results
-                   </Button>
-                  )}
-                </div>
-              </div>
-            )})}
-            {list.length === 0 && <div className="empty-state col-span-full text-center text-sm text-slate-500 py-10 border border-dashed border-slate-300">No scheduled tests</div>}
-          </div>
         </>
       )}
 
       {/* INSTRUCTIONS MODE */}
       {mode === "instructions" && (
-        <div className="max-w-3xl mx-auto swiss-card p-8 space-y-6 mt-6">
-          <h2 className="text-2xl font-black text-slate-900">Test Instructions</h2>
+        <div className="fixed inset-0 z-50 bg-[#F8F9FB] overflow-y-auto w-full h-full p-4 md:p-8 flex items-center justify-center">
+          <div className="max-w-3xl mx-auto bg-white shadow-xl rounded-xl border border-slate-100 p-8 space-y-6 w-full relative">
+            <button onClick={() => setMode("list")} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+              <X size={20} />
+            </button>
+            <h2 className="text-2xl font-black text-slate-900">Test Instructions</h2>
           <ul className="list-disc pl-5 space-y-2 text-slate-700">
             <li>Ensure you have a stable internet connection.</li>
             <li>The test will be conducted in fullscreen mode. Exiting fullscreen will be recorded as a security violation.</li>
@@ -505,6 +663,22 @@ export default function Tests() {
             disabled={!instructionsAgreed} 
             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-sm py-6 text-lg"
             onClick={async () => {
+              try {
+                const sessionRes = await api.post(`/tests/${activeTest.id}/session/start`);
+                const session = sessionRes.data;
+                
+                // Restore answers
+                setResponses(session.answers || {});
+                
+                // Calculate remaining time
+                // Calculate remaining time using backend's secure calculation
+                const elapsed = session.server_elapsed_seconds || 0;
+                const durationSeconds = (activeTest.duration_minutes * 60) || 3600;
+                setTimeRemaining(Math.max(0, durationSeconds - elapsed));
+              } catch (e) {
+                toast.error("Failed to start session on server.");
+              }
+
               setMode("taking");
               setSidePanelOpen(true);
               setTabSwitches(0);
@@ -522,13 +696,15 @@ export default function Tests() {
           >
             Enter Fullscreen &amp; Start Test
           </Button>
+          </div>
         </div>
       )}
 
       {/* ACTIVE TEST MODE */}
       {mode === "taking" && (
-        <div 
-          className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto items-start relative select-none"
+        <div className="fixed inset-0 z-50 bg-[#F8F9FB] overflow-y-auto w-full h-full p-4 md:p-8">
+          <div 
+            className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto items-start relative select-none"
           onCopy={(e) => { e.preventDefault(); toast.error("Copying is disabled!"); setCheatFlags(prev => [...prev, "Attempted Copy"]); }}
           onPaste={(e) => { e.preventDefault(); toast.error("Pasting is disabled!"); setCheatFlags(prev => [...prev, "Attempted Paste"]); }}
           onContextMenu={(e) => { e.preventDefault(); toast.error("Right-click is disabled!"); setCheatFlags(prev => [...prev, "Attempted Right Click"]); }}
@@ -610,7 +786,14 @@ export default function Tests() {
                       return (
                         <button
                           key={oIdx}
-                          onClick={() => setResponses({ ...responses, [questions[currentIdx].id]: opt })}
+                          onClick={() => {
+                            const newResponses = { ...responses, [questions[currentIdx].id]: opt };
+                            setResponses(newResponses);
+                            api.post(`/tests/${activeTest.id}/session/save`, {
+                              answers: newResponses,
+                              time_spent_seconds: (activeTest.duration_minutes * 60) - timeRemaining
+                            }).catch(e => console.warn(e));
+                          }}
                           className={`p-4 border rounded-sm text-left transition-all ${
                             isSelected
                               ? "border-indigo-600 bg-indigo-50/50 text-indigo-900 font-semibold shadow-sm"
@@ -641,7 +824,10 @@ export default function Tests() {
               <Button
                 variant="outline"
                 disabled={currentIdx === 0}
-                onClick={() => setCurrentIdx(currentIdx - 1)}
+                onClick={() => {
+                  setCurrentIdx(currentIdx - 1);
+                  api.post(`/tests/${activeTest.id}/session/save`, { answers: responses, time_spent_seconds: (activeTest.duration_minutes * 60) - timeRemaining }).catch(e => console.warn(e));
+                }}
                 className="rounded-sm"
               >
                 Previous
@@ -649,7 +835,10 @@ export default function Tests() {
               
               {currentIdx < questions.length - 1 ? (
                 <Button
-                  onClick={() => setCurrentIdx(currentIdx + 1)}
+                  onClick={() => {
+                    setCurrentIdx(currentIdx + 1);
+                    api.post(`/tests/${activeTest.id}/session/save`, { answers: responses, time_spent_seconds: (activeTest.duration_minutes * 60) - timeRemaining }).catch(e => console.warn(e));
+                  }}
                   className="bg-slate-900 hover:bg-slate-800 text-white rounded-sm"
                 >
                   Next Question
@@ -715,6 +904,7 @@ export default function Tests() {
             </div>
           )}
 
+        </div>
         </div>
       )}
 

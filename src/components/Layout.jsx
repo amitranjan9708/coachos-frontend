@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { apiState } from "@/lib/api";
+import api, { apiState } from "@/lib/api";
 import { Loader2 } from "lucide-react";
 import Chatbot from "./Chatbot";
 
@@ -53,6 +53,29 @@ export default function Layout({ children, modules = {} }) {
   const navigate = useNavigate();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
+  const [studentInfo, setStudentInfo] = useState(null);
+
+  useEffect(() => {
+    if (user?.role === "student") {
+      Promise.all([
+        api.get("/students"),
+        api.get("/batches"),
+        api.get("/courses")
+      ]).then(([sRes, bRes, cRes]) => {
+        const studentId = user.student_id;
+        const me = studentId ? sRes.data.find(s => s.id === studentId) : sRes.data[0];
+        if (me) {
+           const batch = bRes.data.find(b => b.id === me.batch_id);
+           const course = cRes.data.find(c => c.id === me.course_id);
+           setStudentInfo({
+              ...me,
+              batchName: batch?.name || "—",
+              courseName: course?.name || "—"
+           });
+        }
+      }).catch(() => {});
+    }
+  }, [user]);
 
   const role = user?.role || "student";
   const visibleNav = NAV.filter((n) => {
@@ -143,10 +166,37 @@ export default function Layout({ children, modules = {} }) {
           <Button variant="outline" size="sm" data-testid="topbar-notifications" className="rounded-sm">
             <Bell size={14} />
           </Button>
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-sm">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-            <span className="text-xs uppercase tracking-wider font-bold text-slate-700">{user?.role?.replace("_", " ")}</span>
-          </div>
+          {user?.role === "student" && studentInfo ? (
+            <div className="flex items-center gap-3 px-3 py-1 border border-slate-200 bg-slate-50 rounded-sm">
+               <div className="hidden sm:flex flex-col items-end border-r border-slate-200 pr-3">
+                 <span className="text-[9px] tracking-widest uppercase font-bold text-slate-400">Roll No. {studentInfo.roll_no || "—"}</span>
+                 <span className="text-xs font-bold text-indigo-900">{studentInfo.batchName}</span>
+               </div>
+               <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3 mr-1">
+                 <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+                 <span className="text-xs font-black text-slate-700 uppercase tracking-widest">{studentInfo.courseName}</span>
+               </div>
+               <div className="flex items-center gap-2 cursor-pointer" title="Student Profile" onClick={() => navigate("/profile")}>
+                 <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+                   {initials}
+                 </div>
+                 <div className="flex flex-col">
+                   <span className="text-xs font-bold text-slate-900 leading-tight">{user?.name?.split(" ")[0] || "User"}</span>
+                   <span className="text-[9px] uppercase font-bold text-slate-400 leading-tight">Student</span>
+                 </div>
+               </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 px-3 py-1 border border-slate-200 rounded-sm cursor-pointer hover:bg-slate-50" onClick={() => navigate("/profile")}>
+              <div className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
+                {initials}
+              </div>
+              <div className="hidden sm:flex flex-col">
+                 <span className="text-xs font-bold leading-tight">{user?.name || "User"}</span>
+                 <span className="text-[9px] uppercase tracking-wider font-bold text-slate-500 leading-tight">{user?.role?.replace("_", " ")}</span>
+              </div>
+            </div>
+          )}
         </header>
 
         <main className="flex-1 p-4 lg:p-8 overflow-x-hidden">{children}</main>

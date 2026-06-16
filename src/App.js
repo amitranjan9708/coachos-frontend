@@ -32,6 +32,7 @@ import Scholarship from "@/pages/Scholarship";
 import Referrals from "@/pages/Referrals";
 import Inventory from "@/pages/Inventory";
 import ParentPortal from "@/pages/ParentPortal";
+import StudentProfile from "@/pages/StudentProfile";
 
 export default function App() {
   return (
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="/referrals" element={<Referrals />} />
               <Route path="/inventory" element={<Inventory />} />
               <Route path="/parent-portal" element={<ParentPortal />} />
+              <Route path="/profile" element={<StudentProfile />} />
             </Route>
           </Routes>
         </AuthProvider>

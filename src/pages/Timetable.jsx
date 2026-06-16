@@ -18,6 +18,7 @@ export default function Timetable() {
   const [slots, setSlots] = useState([]);
   const [batches, setBatches] = useState([]);
   const [faculty, setFaculty] = useState([]);
+  const [tests, setTests] = useState([]);
   const [batchId, setBatchId] = useState("all");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ batch_id: "", day: "mon", start_time: "09:00", end_time: "10:00", subject: "", faculty_id: "", classroom: "" });
@@ -41,6 +42,7 @@ export default function Timetable() {
     load();
     api.get("/batches").then(r => setBatches(r.data));
     api.get("/faculty").then(r => setFaculty(r.data));
+    api.get("/tests").then(r => setTests(r.data));
   }, []);
 
   const create = async () => {
@@ -119,12 +121,23 @@ export default function Timetable() {
             {HOURS.map(h => (
               <tr key={h}>
                 <td className="px-3 py-3 border-b border-r border-slate-100 text-xs font-mono text-slate-500">{h}</td>
-                {DAYS.map(d => {
+                {DAYS.map((d, dIdx) => {
                   const slot = filtered.find(s => s.day === d && s.start_time === h);
+                  
+                  const dayNum = dIdx + 1;
+                  const scheduledTests = tests.filter(t => {
+                    if (!t.test_date) return false;
+                    if (batchId !== "all" && t.batch_id && t.batch_id !== batchId) return false;
+                    const date = new Date(t.test_date);
+                    if (date.getDay() !== dayNum) return false;
+                    const hr = date.getHours().toString().padStart(2, '0') + ":00";
+                    return hr === h;
+                  });
+
                   return (
                     <td key={d} className="px-2 py-2 border-b border-r border-slate-100 align-top h-16 min-w-[120px]">
                       {slot && (
-                        <div onClick={() => handleSlotClick(slot)} className="bg-slate-900 text-white p-2 text-xs group relative cursor-pointer hover:bg-slate-800 transition-colors rounded-sm" data-testid={`slot-${slot.id}`}>
+                        <div onClick={() => handleSlotClick(slot)} className="bg-slate-900 text-white p-2 text-xs group relative cursor-pointer hover:bg-slate-800 transition-colors rounded-sm mb-2" data-testid={`slot-${slot.id}`}>
                           <div className="font-bold">{slot.subject}</div>
                           <div className="text-slate-300 text-[10px]">{faculty.find(f=>f.id===slot.faculty_id)?.name || ""}</div>
                           <div className="text-slate-400 text-[10px]">{slot.classroom}</div>
@@ -133,6 +146,15 @@ export default function Timetable() {
                           )}
                         </div>
                       )}
+                      {scheduledTests.map(t => (
+                        <div key={t.id} className="bg-indigo-600 text-white p-2 text-xs rounded-sm mb-2 relative group cursor-default shadow-sm border border-indigo-700">
+                          <div className="flex items-center gap-1 mb-1 text-indigo-200">
+                            <BookOpen size={10} /> <span className="uppercase tracking-widest text-[8px] font-bold">TEST</span>
+                          </div>
+                          <div className="font-bold">{t.title}</div>
+                          <div className="text-indigo-200 text-[10px] mt-0.5">{t.subject}</div>
+                        </div>
+                      ))}
                     </td>
                   );
                 })}

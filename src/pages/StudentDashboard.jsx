@@ -13,6 +13,8 @@ export default function StudentDashboard() {
   const [tests, setTests] = useState([]);
   const [attendance, setAttendance] = useState({ present: 0, total: 0, rate: 0 });
   const [materials, setMaterials] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [courses, setCourses] = useState([]);
 
   useEffect(() => {
     const studentId = user?.student_id;
@@ -31,6 +33,8 @@ export default function StudentDashboard() {
     api.get("/assignments").then(r => setAssignments(r.data));
     api.get("/tests").then(r => setTests(r.data));
     api.get("/study-materials").then(r => setMaterials(r.data));
+    api.get("/batches").then(r => setBatches(r.data));
+    api.get("/courses").then(r => setCourses(r.data));
   }, [user]);
 
   const due = invoices.reduce((s, i) => s + ((i.amount || 0) - (i.paid_amount || 0)), 0);
@@ -43,6 +47,8 @@ export default function StudentDashboard() {
         title="Your learning dashboard"
         subtitle={me ? `Roll ${me.roll_no || "—"} · ${me.phone}` : "Personal academic snapshot"}
       />
+
+
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <KpiCard label="Attendance" value={`${attendance.rate}%`} hint={`${attendance.present}/${attendance.total} classes`} accent="emerald" testId="kpi-my-attendance"/>
